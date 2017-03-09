@@ -14,20 +14,16 @@ import sys
 import multiprocessing.dummy as mt
 import random
 import crawlerUtil
-initium='466505160192708'
-reporter='1646675415580324'
-userToken='EAARyVGSlbYYBAE9kBPxLKN3FY1nrS0SR379RvAdVjxssFU7ZAPjAr4qLwDboP5UNVF2MbUpGGqmU0jDjezV7R2lC4xDzHzFZBQ9AG2oU3TPCM13RV048MHffHU07ZAPniZBxt7gZAzeT93V4ZCZC8TW1DUTejgcl9cZD'
 
 #%%
 
 class PageCralwer(facebook.GraphAPI):   
-    def __init__(self,pageID,access_token,version=None, timeout=None, proxies=None):
+    def __init__(self,pageID, pageName, access_token, version=None, timeout=None, proxies=None):
         super(PageCralwer,self).__init__(version, timeout, proxies)
         self.access_token=access_token
         self.pageID=pageID
         self.pageName=None
-        self.postFilter=None
-        self.crawlPostTime=None
+        self.batchInfo=None
         self.postList=[]
         self.postLike=[]
         self.postShare=[]
@@ -35,11 +31,14 @@ class PageCralwer(facebook.GraphAPI):
         self.likeFailed=[]
         self.shareFailed=[]
         self.commentFailed=[]
-        self.uniqueUser=[]
+        self.uniqueUser=set()
         self.POST_CONNECTION_STORAGE={'reactions':self.postLike,'sharedposts':self.postShare,'comments':self.postComment}
         self.POST_CONNECTION_FAILED_STORAGE={'reactions':self.likeFailed,'sharedposts':self.shareFailed,'comments':self.commentFailed}
-
-                
+    
+    def popArgs(self,kwargs):
+            [kwargs.pop(x,None) for x in ['fields','limit']]
+            return kwargs
+    
     def get_objs_connections(self,ids,connection_name,**args):
         args['ids']=','.join(ids)
         try:
@@ -55,116 +54,99 @@ class PageCralwer(facebook.GraphAPI):
             e.id=postId
             raise e
     
-    def _combine_res(self, res, obj, postFilter):
+    def _combine_res(self, res, obj, batchInfo):
         temp=obj['data']
     
         #no Filter
-        if not postFilter:
+        if not batchInfo:
             res['started']=True
             res['resList'].append(temp)
             return res           
             
         #check for the start
-        elif postFilter['filterType']=='both' and not res['started']:
-            condValue, condType =postFilter['startFilter']
-            if condType=='int':
-                if len(temp)+res['skip']>condValue:
-                    res['started']=True
-                    obj['data']=temp[condValue-skip:]
-                    return self._combine_res(res, obj ,postFilter)
-                else:
-                    res['skip']=res['skip']+len(temp)
-                    return res
-            elif condType=='date':
-                postDate=[datetime.datetime.strptime(x['created_time'].split('T')[0],'%Y-%m-%d').date() for x in temp]
-                minDate=min(postDate)
-                if minDate < condValue:
-                    res['started']=True
-                    print 'just appear one time!(start)'
-                    reserveFilter=[x <= condValue for x in postDate]
-                    reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
-                    obj['data']=reserveItem
-                    return self._combine_res(res, obj , postFilter)
-                else:
-                    return res      
-    
-        # check for the ends
-        elif postFilter['filterType']=='until' or (postFilter['filterType']=='both' and res['started']):
-            res['started']=True
-            condValue, condType =postFilter['endFilter']
-            
-            if condType=='int':
-                res['resList'].extend(temp)
-                if len(res['resList'])+len(temp)>=condValue:
-                    res['resList']=res['resList'][:condValue]
-                    res['ended']=True
-                return res
-            elif condType=='date':
-                postDate=[datetime.datetime.strptime(x['created_time'].split('T')[0],'%Y-%m-%d').date() for x in temp]
-                minDate=min(postDate)
-                if minDate<condValue:
-                    print 'just appear one time!(end)'
-                    res['ended']=True
-                    reserveFilter=[x>=condValue for x in postDate]
-                    reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
-                    res['resList'].extend(reserveItem)
-                else:
-                    res['resList'].extend(temp)
-                return res
+        elif (batchInfo['filterType']=='both' or batchInfo['filterType']=='until') and not res['started']:
+            condValue=batchInfo['startFilter']
+            postDate=[datetime.datetime.strptime(x['created_time'].split('T')[0],'%Y-%m-%d').date() for x in temp]
+            minDate=min(postDate)
+            if minDate < condValue:
+                res['started']=True
+                print 'just appear one time!(start)'
+                reserveFilter=[x <= condValue for x in postDate]
+                reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
+                obj['data']=reserveItem
+                return self._combine_res(res, obj , batchInfo)
+            else:
+                return res      
 
-    def _crawl_paging_obj(self, nextPage, res, sleep=1, postFilter=None):        
+        # check for the ends
+        elif batchInfo['filterType']=='since' or (batchInfo['filterType']=='both' and res['started']):
+            res['started']=True
+            condValue=batchInfo['endFilter']
+            postDate=[datetime.datetime.strptime(x['created_time'].split('T')[0],'%Y-%m-%d').date() for x in temp]
+            minDate=min(postDate)
+            if minDate<condValue:
+                print 'just appear one time!(end)'
+                res['ended']=True
+                reserveFilter=[x>=condValue for x in postDate]
+                reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
+                res['resList'].extend(reserveItem)
+            else:
+                res['resList'].extend(temp)
+            return res
+
+    def _crawl_paging_obj(self, nextPage, res, batchInfo, sleep, **kwargs):
+        kwargs=self.popArgs(kwargs)
         while nextPage:
-            page=requests.get(nextPage).json()
+            page=requests.get(nextPage, **kwargs).json()
             print 'sleep for {} seconds'.format(sleep)
             time.sleep(sleep)
     
-            res=self._combine_res(res, page, postFilter)
+            res=self._combine_res(res, page, batchInfo)
             nextPage=page['paging']['next'] if page.has_key('paging') and page['paging'].has_key('next') else None                               
             if res['ended'] or not nextPage:
                 return res
             
-    def get_posts(self, postFilter=None, sleep=1, **args):
+    def get_posts(self, startDate=None, endDate=None, sleep=1, **kwargs):
         #check and preparing input
-        if postFilter:
-            filterTemp=[]
-            for idx, x in enumerate(postFilter):
-                condType=type(x).__name__                       
-            if condType=='str':
+        batchInfo={}
+        temp={0:'endFilter',1:'startFilter'} # notice that meaning of filter were reverse with meaning of start/end Date
+        for idx, x in enumerate([startDate, endDate]):
+            if x:         
                 try:
-                    x=datetime.datetime.strptime(x,'%Y-%m-%d').date()
-                    condType='date'
+                    date=datetime.datetime.strptime(x,'%Y-%m-%d').date()
                 except:
-                    print 'If input postfilter as string, should be a date string following iso date format:{}'.format(x)
+                    print '[FAILED] startDate/endDate should be a date string following "YYYY-mm-dd" formate:{}'.format(x)
                     sys.exit()
-                filterTemp.append((x,condType))
-            if len(filterTemp)==1:
-                postFilter={'filterType':'until','endFilter':filterTemp[0]}
-            elif len(filterTemp)==2:
-                postFilter={'filterType':'both','startFilter':filterTemp[1],'endFilter':filterTemp[0]}
+            batchInfo.update({temp[idx]:date})
+        if len(batchInfo)==1:
+            batchInfo.update({'filterType':'since'}) if startDate else batchInfo.update({'filterType':'until'})
+        elif len(batchInfo)==2:
+            batchInfo.update({'filterType':'both'})
         
-        res={'resList':[],'started':False,'ended':False,'skip':0,'endCond':None}
-        
+        res={'resList':[],'started':False,'ended':False,'endCond':None}
+    
         #process
-        entryObj=self.get_connections(self.pageID, connection_name='posts', **args)              
-        res=self._combine_res(res, entryObj, postFilter)
-        nextPage=entryObj['paging']['next'] if entryObj.has_key('paging') and entryObj['paging'].has_key('next') else None
-                         
+        startTime=datetime.datetime.now()
+        entryObj=self.get_connections(self.pageID, connection_name='posts', **kwargs)              
+        res=self._combine_res(res, entryObj, batchInfo)
+        nextPage=entryObj['paging']['next'] if entryObj.has_key('paging') and entryObj['paging'].has_key('next') else None                        
         if not res['ended'] and nextPage:
-            self.postList=self._crawl_paging_obj(nextPage, res, postFilter=postFilter)['resList']
+            self.postList=self._crawl_paging_obj(nextPage, res, batchInfo, sleep, **kwargs)['resList']
         
         # ending
         res['endCond']='ended' if res['ended'] else 'noNextPage'
         self.postList=res['resList']
-        self.postFilter=postFilter
-        self.crawlPostTime=datetime.datetime.now()
-        
-        
-    def _pool_crawl_paging_obj(self, objTuple, pool, objType, **args):
+        for x in ['started','ended','endCond']:
+            batchInfo.update({x:res[x]})
+        batchInfo.update({'startTime':startTime.strftime('%Y-%m-%d %H:M:%S')})
+        self.batchInfo=batchInfo
+                
+    def _pool_crawl_paging_obj(self, objTuple, pool, objType, **kwargs):
+        kwargs=self.popArgs(kwargs)
         if objType=='url':
             objId, url=objTuple
             print 'done 1 request for conneciton paging, though dont sleep'
-#            time.sleep(1)
-            obj=requests.get(url, **kwargs ).json()
+            obj=requests.get(url, **kwargs).json()
             objTuple=(objId,obj)
             
         objId, obj=objTuple
@@ -173,7 +155,8 @@ class PageCralwer(facebook.GraphAPI):
             url=obj['paging']['next']
             nextRes=pool.apply_async(self._pool_crawl_paging_obj,
                                      args=((objId,url), pool, 'url',),
-                                     kwds=args)
+                                     kwds=kwargs)
+#            pool.put(nextRes)
         return res
             
     def get_post_connections(self,connection_name,**kwargs):
@@ -242,7 +225,7 @@ class PageCralwer(facebook.GraphAPI):
                 time.sleep(random.random())             
                 print 'wait another random second to wait for the consume done!'
         
-        print 'all paing consume work ok!'
+        print 'all paging consume work ok!'
         
         #get all share user ID for sharedpost
         if connection_name=='sharedposts':
@@ -258,7 +241,7 @@ class PageCralwer(facebook.GraphAPI):
             consumerPool.join()
             sharedUser=dict()
             [sharedUser.update(x.get()) for x in tempShareUser]
-#            sharedUser=dict([(v.get(['parent_id']),v['from']) for k,v in sharedUser.items() if v])
+
         #collect result
         resultList=[]
         for objId, data in tempList:
@@ -280,27 +263,47 @@ class PageCralwer(facebook.GraphAPI):
         res.extend([x['id'] for x in self.postLike])
         res.extend([x['from']['id'] for x in self.postComment])
         res.extend([x['userID'] for x in self.postShare])
-        return set(res)
+        self.uniqueUser=set(res)
+        return 
 
     
 #%%
-        
-#    
-initChan=PageCralwer(initium,userToken)
+
+initium='466505160192708'
+reporter='1646675415580324'
+userToken='EAARyVGSlbYYBAE9kBPxLKN3FY1nrS0SR379RvAdVjxssFU7ZAPjAr4qLwDboP5UNVF2MbUpGGqmU0jDjezV7R2lC4xDzHzFZBQ9AG2oU3TPCM13RV048MHffHU07ZAPniZBxt7gZAzeT93V4ZCZC8TW1DUTejgcl9cZD'
+    
+initChan=PageCralwer(initium, u'端傳媒', userToken)
 fields='id,shares,message,link,status_type,type,created_time,permalink_url',
-initChan.get_posts(postFilter=('2017-03-01','2017-03-07'), limit=100, fields=fields)
+initChan.get_posts(startDate='2017-03-01',endDate='2017-03-07', sleep=1, limit=100, fields=fields)
 initChan.get_post_connections(connection_name='reactions',limit=5000)
 initChan.get_post_connections(connection_name='comments',limit=5000)
 initChan.get_post_connections(connection_name='sharedposts',limit=5000)
-uniqueUser=initChan.get_unique_user_id()
-#%%
+initChan.get_unique_user_id()
 
-reportChan=PageCralwer(reporter,userToken)
-fields='id,shares,message,link,status_type,type,created_time,permalink_url',
-reportChan.get_posts(postFilter=('2017-02-01',), limit=100, fields=fields)
+
+reportChan=PageCralwer(reporter,u'報導者', userToken)
+reportChan.get_posts(startDate='2017-03-01',endDate='2017-03-07', sleep=1, limit=100, fields=fields)
 reportChan.get_post_connections(connection_name='reactions',limit=5000)
 reportChan.get_post_connections(connection_name='comments',limit=5000)
 reportChan.get_post_connections(connection_name='sharedposts',limit=5000)
+reportChan.get_unique_user_id()
+
+#%%
+import numpy as np
+
+cralwerList=[initChan, reportChan]
+cralwerNameList=[x.pageName for x in cralwerList]
+edgelen=len(cralwerList)
+commonMat=np.zeros(edgelen**2).reshape(edgelen,edgelen)
+for i,objI  in enumerate(cralwerList):
+    for j,objJ in enumerate(cralwerList):
+        if i!=j:
+            commonMat[i,j]=objI.uniqueUser.intersection(objJ.uniqueUser)/len(objI.uniqueUser)
+        else:
+            continue
+commonDF=pd.DataFrame(commonMat, index=cralwerNameList, columns=cralwerNameList)
+        
 
 
 
