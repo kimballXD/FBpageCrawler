@@ -4,16 +4,14 @@ Created on Thu Mar 02 00:36:24 2017
 
 @author: Wu
 """
-import sqlite3
-import pandas as pd
-import facebook
-import requests
 import time
+import random
 import datetime
 import sys
 import multiprocessing.dummy as mt
-import random
-import crawlerUtil
+import facebook
+import requests
+import pageCrawlerUtil
 
 #%%
 
@@ -22,7 +20,7 @@ class PageCralwer(facebook.GraphAPI):
         super(PageCralwer,self).__init__(version, timeout, proxies)
         self.access_token=access_token
         self.pageID=pageID
-        self.pageName=None
+        self.pageName=pageName
         self.batchInfo=None
         self.postList=[]
         self.postLike=[]
@@ -35,7 +33,7 @@ class PageCralwer(facebook.GraphAPI):
         self.POST_CONNECTION_STORAGE={'reactions':self.postLike,'sharedposts':self.postShare,'comments':self.postComment}
         self.POST_CONNECTION_FAILED_STORAGE={'reactions':self.likeFailed,'sharedposts':self.shareFailed,'comments':self.commentFailed}
     
-    def popArgs(self,kwargs):
+    def _popArgs(self,kwargs):
             [kwargs.pop(x,None) for x in ['fields','limit']]
             return kwargs
     
@@ -70,7 +68,7 @@ class PageCralwer(facebook.GraphAPI):
             minDate=min(postDate)
             if minDate < condValue:
                 res['started']=True
-                print 'just appear one time!(start)'
+                print('just appear one time!(start)')
                 reserveFilter=[x <= condValue for x in postDate]
                 reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
                 obj['data']=reserveItem
@@ -85,7 +83,7 @@ class PageCralwer(facebook.GraphAPI):
             postDate=[datetime.datetime.strptime(x['created_time'].split('T')[0],'%Y-%m-%d').date() for x in temp]
             minDate=min(postDate)
             if minDate<condValue:
-                print 'just appear one time!(end)'
+                print('just appear one time!(end)')
                 res['ended']=True
                 reserveFilter=[x>=condValue for x in postDate]
                 reserveItem=[temp[ind] for ind, x in enumerate(reserveFilter) if x]
@@ -95,10 +93,10 @@ class PageCralwer(facebook.GraphAPI):
             return res
 
     def _crawl_paging_obj(self, nextPage, res, batchInfo, sleep, **kwargs):
-        kwargs=self.popArgs(kwargs)
+        kwargs=self._popArgs(kwargs)
         while nextPage:
             page=requests.get(nextPage, **kwargs).json()
-            print 'sleep for {} seconds'.format(sleep)
+            print('sleep for {} seconds'.format(sleep))
             time.sleep(sleep)
     
             res=self._combine_res(res, page, batchInfo)
@@ -115,7 +113,7 @@ class PageCralwer(facebook.GraphAPI):
                 try:
                     date=datetime.datetime.strptime(x,'%Y-%m-%d').date()
                 except:
-                    print '[FAILED] startDate/endDate should be a date string following "YYYY-mm-dd" formate:{}'.format(x)
+                    print('[FAILED] startDate/endDate should be a date string following "YYYY-mm-dd" formate:{}'.format(x))
                     sys.exit()
             batchInfo.update({temp[idx]:date})
         if len(batchInfo)==1:
@@ -141,28 +139,10 @@ class PageCralwer(facebook.GraphAPI):
         batchInfo.update({'startTime':startTime.strftime('%Y-%m-%d %H:M:%S')})
         self.batchInfo=batchInfo
                 
-    def _pool_crawl_paging_obj(self, objTuple, pool, objType, **kwargs):
-        kwargs=self.popArgs(kwargs)
-        if objType=='url':
-            objId, url=objTuple
-            print 'done 1 request for conneciton paging, though dont sleep'
-            obj=requests.get(url, **kwargs).json()
-            objTuple=(objId,obj)
-            
-        objId, obj=objTuple
-        res=(objId, obj['data'])
-        if obj.has_key('paging') and obj['paging'].has_key('next'):
-            url=obj['paging']['next']
-            nextRes=pool.apply_async(self._pool_crawl_paging_obj,
-                                     args=((objId,url), pool, 'url',),
-                                     kwds=kwargs)
-#            pool.put(nextRes)
-        return res
-            
-    def get_post_connections(self,connection_name,**kwargs):
-      
+
+    def get_post_connections(self,connection_name,**kwargs):    
         if not self.postList:
-            print 'there is no post for crawling {}, call get_posts() first'.format(connection_name)
+            print('there is no post for crawling {}, call get_posts() first'.format(connection_name))
             sys.exit()
 
         manager=mt.Manager()
@@ -171,28 +151,28 @@ class PageCralwer(facebook.GraphAPI):
         produceQueue=manager.Queue()
         resQueue=manager.JoinableQueue()
                 
-        for part in crawlerUtil.partitioner(self.postList,20):
+        for part in pageCrawlerUtil.partitioner(self.postList,20):
             partIDs=[x['id'] for x in part]
             produceToken=producerPool.apply_async(func=self.get_objs_connections,
                                                   args=(partIDs, connection_name,),
                                                   kwds=kwargs)
             produceQueue.put(produceToken)
-            print 'sleep {} second for every producer commit'.format(1)
+            print('sleep {} second for every producer commit'.format(1))
             time.sleep(1)
 #                        
         #make sure all get_objs_connection works are done
         while produceQueue.qsize()>0:
-            print 'Tasks in the produceQueue:{}.'.format(produceQueue.qsize())
+            print('Tasks in the produceQueue:{}.'.format(produceQueue.qsize()))
             produceRes=produceQueue.get()
             
             if produceRes.ready() and produceRes.successful():
-                for x in produceRes.get().iteritems():
+                for x in produceRes.get().items():
                     consumeToken=consumerPool.apply_async(func=self._pool_crawl_paging_obj,
                                                           args=(x,consumerPool,'obj'),
                                                           kwds=kwargs)
                     resQueue.put(consumeToken)
                 if len(produceRes.get())>1:
-                    print 'sleep {} second for every consumer crawl_paging batch commit'.format(2)
+                    print('sleep {} second for every consumer crawl_paging batch commit'.format(2))
                     time.sleep(2)
             elif produceRes.ready() and not produceRes.successful():
                 try:
@@ -208,40 +188,42 @@ class PageCralwer(facebook.GraphAPI):
                             produceQueue.put(produceToken)
             else:
                 produceQueue.put(produceRes) #put back
-                time.sleep(2)
-                print 'wait another 2 second to wait for the produce done!'
-        
-        print 'all produce works OK!'
+                time.sleep(random.random())
+                print('wait another random second to wait for the produce done!')        
+        print('all produce works OK!')
                 
         #make sure all paging are crawled back
         tempList=[]
         while resQueue.qsize()>0:
-            print 'Task in the consume queue: {}.'.format(resQueue.qsize())
+            print('Task in the consume queue: {}.'.format(resQueue.qsize()))
             consumeRes=resQueue.get()
             if consumeRes.ready():
                 tempList.append(consumeRes.get())
+                resQueue.task_done()
             else:
                 resQueue.put(consumeRes) #put bac
                 time.sleep(random.random())             
-                print 'wait another random second to wait for the consume done!'
-        
-        print 'all paging consume work ok!'
+                print('wait another random second to wait for the consume done!')
+        resQueue.join()
+        print('all paging consume work ok!')
         
         #get all share user ID for sharedpost
         if connection_name=='sharedposts':
+            shareUserList=[x['id'] for objId, data in tempList for x in data if x]
+            kwargs.update({'fields':'from,parent_id'})
             tempShareUser=[]
-            for part in crawlerUtil.partitioner(tempList,20):
-                partId=[x['id'] for objId, data in part for x in data if x]
-                kwargs.update({'fields':'from,parent_id'})
+            for partId in pageCrawlerUtil.partitioner(shareUserList,20):
                 consumeToken=consumerPool.apply_async(func=self.get_objects,
                                                       args=(partId,),
                                                       kwds=kwargs)
-                tempShareUser.append(consumeToken)        
+                tempShareUser.append(consumeToken)
+                print('sleep for random second for every batch submit')
+                time.sleep(random.random())
             consumerPool.close()
             consumerPool.join()
             sharedUser=dict()
             [sharedUser.update(x.get()) for x in tempShareUser]
-
+            
         #collect result
         resultList=[]
         for objId, data in tempList:
@@ -254,10 +236,26 @@ class PageCralwer(facebook.GraphAPI):
         
         #return
         self.POST_CONNECTION_STORAGE[connection_name].extend(resultList)
-        producerPool.close()
-        
+        producerPool.close()       
         return 
-                
+
+    def _pool_crawl_paging_obj(self, objTuple, pool, objType, **kwargs):
+        kwargs=self._popArgs(kwargs)
+        if objType=='url':
+            objId, url=objTuple
+            print('done 1 request for conneciton paging, though dont sleep')
+            obj=requests.get(url, **kwargs).json()
+            objTuple=(objId,obj)
+            
+        objId, obj=objTuple
+        res=(objId, obj['data'])
+        if obj.has_key('paging') and obj['paging'].has_key('next'):
+            url=obj['paging']['next']
+            nextRes=pool.apply_async(self._pool_crawl_paging_obj,
+                                     args=((objId,url), pool, 'url',),
+                                     kwds=kwargs)
+        return res
+          
     def get_unique_user_id(self):
         res=[]
         res.extend([x['id'] for x in self.postLike])
@@ -266,45 +264,6 @@ class PageCralwer(facebook.GraphAPI):
         self.uniqueUser=set(res)
         return 
 
-    
-#%%
 
-initium='466505160192708'
-reporter='1646675415580324'
-userToken='EAARyVGSlbYYBAE9kBPxLKN3FY1nrS0SR379RvAdVjxssFU7ZAPjAr4qLwDboP5UNVF2MbUpGGqmU0jDjezV7R2lC4xDzHzFZBQ9AG2oU3TPCM13RV048MHffHU07ZAPniZBxt7gZAzeT93V4ZCZC8TW1DUTejgcl9cZD'
-    
-initChan=PageCralwer(initium, u'端傳媒', userToken)
-fields='id,shares,message,link,status_type,type,created_time,permalink_url',
-initChan.get_posts(startDate='2017-03-01',endDate='2017-03-07', sleep=1, limit=100, fields=fields)
-initChan.get_post_connections(connection_name='reactions',limit=5000)
-initChan.get_post_connections(connection_name='comments',limit=5000)
-initChan.get_post_connections(connection_name='sharedposts',limit=5000)
-initChan.get_unique_user_id()
-
-
-reportChan=PageCralwer(reporter,u'報導者', userToken)
-reportChan.get_posts(startDate='2017-03-01',endDate='2017-03-07', sleep=1, limit=100, fields=fields)
-reportChan.get_post_connections(connection_name='reactions',limit=5000)
-reportChan.get_post_connections(connection_name='comments',limit=5000)
-reportChan.get_post_connections(connection_name='sharedposts',limit=5000)
-reportChan.get_unique_user_id()
 
 #%%
-import numpy as np
-
-cralwerList=[initChan, reportChan]
-cralwerNameList=[x.pageName for x in cralwerList]
-edgelen=len(cralwerList)
-commonMat=np.zeros(edgelen**2).reshape(edgelen,edgelen)
-for i,objI  in enumerate(cralwerList):
-    for j,objJ in enumerate(cralwerList):
-        if i!=j:
-            commonMat[i,j]=objI.uniqueUser.intersection(objJ.uniqueUser)/len(objI.uniqueUser)
-        else:
-            continue
-commonDF=pd.DataFrame(commonMat, index=cralwerNameList, columns=cralwerNameList)
-        
-
-
-
-

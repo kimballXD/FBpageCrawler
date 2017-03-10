@@ -1,6 +1,8 @@
 *
 !.git/
 !.gitignore
-!util/
+!util.py
+!__init__.py
+!README.md
 !pagecrawler.py
 !commonUser.py
