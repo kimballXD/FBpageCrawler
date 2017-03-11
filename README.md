@@ -11,10 +11,7 @@
 # preparing
 - get your "facebook access token" (a long random string representing yourself) from [here](https://developers.facebook.com/tools/debug/accesstoken)
 
-- refresh some python syntax
-	- list, dict
-	- list comprehension
-	- function
-	- class 
-	- exception
+- set parameter in commonUser.py
+	- ROOT_PATH @ line 8: the project folder path
+	- userToken @ line 25: what your got from the last step
 

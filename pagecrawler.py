@@ -9,19 +9,21 @@ import random
 import datetime
 import sys
 import multiprocessing.dummy as mt
+import pickle
 import facebook
 import requests
 import pageCrawlerUtil
 
 #%%
 
-class PageCralwer(facebook.GraphAPI):   
+class PageCrawler(facebook.GraphAPI):   
     def __init__(self,pageID, pageName, access_token, version=None, timeout=None, proxies=None):
-        super(PageCralwer,self).__init__(version, timeout, proxies)
+        super(PageCrawler,self).__init__(version, timeout, proxies)
         self.access_token=access_token
         self.pageID=pageID
         self.pageName=pageName
         self.batchInfo=None
+        self.pageInfo=dict()
         self.postList=[]
         self.postLike=[]
         self.postShare=[]
@@ -32,7 +34,7 @@ class PageCralwer(facebook.GraphAPI):
         self.uniqueUser=set()
         self.POST_CONNECTION_STORAGE={'reactions':self.postLike,'sharedposts':self.postShare,'comments':self.postComment}
         self.POST_CONNECTION_FAILED_STORAGE={'reactions':self.likeFailed,'sharedposts':self.shareFailed,'comments':self.commentFailed}
-    
+        
     def _popArgs(self,kwargs):
             [kwargs.pop(x,None) for x in ['fields','limit']]
             return kwargs
@@ -103,6 +105,10 @@ class PageCralwer(facebook.GraphAPI):
             nextPage=page['paging']['next'] if 'paging' in page and 'next' in page['paging'] else None                               
             if res['ended'] or not nextPage:
                 return res
+            
+    def get_pageInfo(self, **kwargs):
+        self.pageInfo=self.get_object(self.pageID, **kwargs)
+        return    
             
     def get_posts(self, startDate=None, endDate=None, sleep=1, **kwargs):
         #check and preparing input
@@ -263,7 +269,18 @@ class PageCralwer(facebook.GraphAPI):
         res.extend([x['userID'] for x in self.postShare])
         self.uniqueUser=set(res)
         return 
-
-
-
 #%%
+def load_cralwer(connection, pageName, conType):
+    if conType=='pickle':
+        with open(connection,'rb') as infile:
+            cralwerList=pickle.load(infile)
+        found=False
+        for x in cralwerList:
+            if x.pageName==pageName:
+                found=True
+                break
+        if not found:
+            raise Exception('page {} is not found in the pickle File'.format(pageName))
+        else:
+            return x
+            
