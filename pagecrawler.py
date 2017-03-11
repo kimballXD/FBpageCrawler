@@ -100,7 +100,7 @@ class PageCralwer(facebook.GraphAPI):
             time.sleep(sleep)
     
             res=self._combine_res(res, page, batchInfo)
-            nextPage=page['paging']['next'] if page.has_key('paging') and page['paging'].has_key('next') else None                               
+            nextPage=page['paging']['next'] if 'paging' in page and 'next' in page['paging'] else None                               
             if res['ended'] or not nextPage:
                 return res
             
@@ -127,7 +127,7 @@ class PageCralwer(facebook.GraphAPI):
         startTime=datetime.datetime.now()
         entryObj=self.get_connections(self.pageID, connection_name='posts', **kwargs)              
         res=self._combine_res(res, entryObj, batchInfo)
-        nextPage=entryObj['paging']['next'] if entryObj.has_key('paging') and entryObj['paging'].has_key('next') else None                        
+        nextPage=entryObj['paging']['next'] if 'paging' in entryObj and 'next' in entryObj['paging'] else None                        
         if not res['ended'] and nextPage:
             self.postList=self._crawl_paging_obj(nextPage, res, batchInfo, sleep, **kwargs)['resList']
         
@@ -136,7 +136,7 @@ class PageCralwer(facebook.GraphAPI):
         self.postList=res['resList']
         for x in ['started','ended','endCond']:
             batchInfo.update({x:res[x]})
-        batchInfo.update({'startTime':startTime.strftime('%Y-%m-%d %H:M:%S')})
+        batchInfo.update({'startTime':startTime.strftime('%Y-%m-%d %H:%M:%S')})
         self.batchInfo=batchInfo
                 
 
@@ -249,7 +249,7 @@ class PageCralwer(facebook.GraphAPI):
             
         objId, obj=objTuple
         res=(objId, obj['data'])
-        if obj.has_key('paging') and obj['paging'].has_key('next'):
+        if 'paging' in obj and 'next' in obj['paging']:
             url=obj['paging']['next']
             nextRes=pool.apply_async(self._pool_crawl_paging_obj,
                                      args=((objId,url), pool, 'url',),
